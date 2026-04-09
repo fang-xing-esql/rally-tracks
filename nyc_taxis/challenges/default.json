@@ -1771,6 +1771,50 @@
           "clients": 1,
           "warmup-iterations": 10,
           "iterations": 50
+        },
+                {
+          "operation": "in_subquery_10",
+          "tags": ["subquery", "stats", "sort"],
+          "clients": 1,
+          "warmup-iterations": 5,
+          "iterations": 20
+        },
+        {
+          "operation": "in_subquery_50",
+          "tags": ["subquery", "stats", "sort"],
+          "clients": 1,
+          "warmup-iterations": 5,
+          "iterations": 20
+        },
+        {
+          "operation": "in_subquery_100",
+          "tags": ["subquery", "stats", "sort"],
+          "clients": 1,
+          "warmup-iterations": 5,
+          "iterations": 20
+        },
+        {
+          "operation": "in_subquery_200",
+          "tags": ["subquery", "stats", "sort"],
+          "clients": 1,
+          "warmup-iterations": 5,
+          "iterations": 20
+        },
+        {
+          "operation": "in_subquery_379",
+          "tags": ["subquery", "stats", "sort"],
+          "clients": 1,
+          "warmup-iterations": 5,
+          "iterations": 20,
+          "request-timeout": 120
+        },
+        {
+          "operation": "in_subquery_100k",
+          "tags": ["subquery", "stats", "sort"],
+          "clients": 1,
+          "warmup-iterations": 2,
+          "iterations": 10,
+          "request-timeout": 120
         }
       ]
     },

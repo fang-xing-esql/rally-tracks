@@ -1853,4 +1853,34 @@
       "name": "esql_stats_enrich_payments_fares_limit_0",
       "operation-type": "esql",
       "query": "FROM nyc_taxis | KEEP rate_code_id, payment_type, trip_type, vendor_id, fare_amount | LIMIT 100000 | ENRICH nyc_payment_types_fares ON payment_type WITH payment_type_name=name, payment_type_fare=fare | STATS count=count(*), avg_fare=avg(fare_amount), avg_fare=avg(fare_amount) BY payment_type_name | LIMIT 0"
+    },
+        {
+      "name": "in_subquery_10",
+      "operation-type": "esql",
+      "query" : "FROM nyc_taxis | EVAL d = date_trunc(1 day, dropoff_datetime) | WHERE d IN (FROM nyc_taxis | stats c=count(*) by day = date_trunc(1 day, dropoff_datetime) | sort c desc | limit 10 | keep day)"
+    },
+    {
+      "name": "in_subquery_50",
+      "operation-type": "esql",
+      "query" : "FROM nyc_taxis | EVAL d = date_trunc(1 day, dropoff_datetime) | WHERE d IN (FROM nyc_taxis | stats c=count(*) by day = date_trunc(1 day, dropoff_datetime) | sort c desc | limit 50 | keep day)"
+    },
+    {
+      "name": "in_subquery_100",
+      "operation-type": "esql",
+      "query" : "FROM nyc_taxis | EVAL d = date_trunc(1 day, dropoff_datetime) | WHERE d IN (FROM nyc_taxis | stats c=count(*) by day = date_trunc(1 day, dropoff_datetime) | sort c desc | limit 100 | keep day)"
+    },
+    {
+      "name": "in_subquery_200",
+      "operation-type": "esql",
+      "query" : "FROM nyc_taxis | EVAL d = date_trunc(1 day, dropoff_datetime) | WHERE d IN (FROM nyc_taxis | stats c=count(*) by day = date_trunc(1 day, dropoff_datetime) | sort c desc | limit 200 | keep day)"
+    },
+    {
+      "name": "in_subquery_379",
+      "operation-type": "esql",
+      "query" : "FROM nyc_taxis | EVAL d = date_trunc(1 day, dropoff_datetime) | WHERE d IN (FROM nyc_taxis | stats c=count(*) by day = date_trunc(1 day, dropoff_datetime) | keep day)"
+    },
+    {
+      "name": "in_subquery_100k",
+      "operation-type": "esql",
+      "query" : "FROM nyc_taxis | EVAL m = date_trunc(1 minute, dropoff_datetime) | WHERE m IN (FROM nyc_taxis | stats c=count(*) by minute = date_trunc(1 minute, dropoff_datetime) | sort c desc | limit 100000 | keep minute)"
     }
