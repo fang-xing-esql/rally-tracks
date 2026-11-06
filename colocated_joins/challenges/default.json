@@ -1,0 +1,86 @@
+    {
+      "name": "colocated-vs-lookup",
+      "description": "Compares colocated JOIN (right side routed by the join key; left side routed or not) with LOOKUP JOIN on a multi-node cluster. Run with number_of_shards equal to the number of data nodes and an Elasticsearch build with the JOIN command.",
+      "default": true,
+      "schedule": [
+        {
+          "operation": "setup-indices",
+          "tags": ["setup"]
+        },
+        {
+          "operation": "index-lhs-unrouted",
+          "clients": {{bulk_indexing_clients | default(8)}},
+          "tags": ["setup"]
+        }
+{% for key in p_card_keys %}
+        ,{
+          "operation": "reindex-lhs-aligned-{{key}}",
+          "tags": ["setup"]
+        }
+{% endfor %}
+{% for card in cards %}
+        ,{
+          "operation": "index-rhs-{{card.label}}",
+          "clients": {{bulk_indexing_clients | default(8)}},
+          "tags": ["setup"]
+        },
+        {
+          "operation": "reindex-lookup-{{card.label}}",
+          "tags": ["setup"]
+        },
+        {
+          "operation": "reindex-rhs-key-only-{{card.label}}",
+          "tags": ["setup"]
+        },
+        {
+          "operation": "reindex-lookup-key-only-{{card.label}}",
+          "tags": ["setup"]
+        }
+{% endfor %}
+        ,{
+          "name": "refresh-after-index",
+          "operation": "refresh",
+          "tags": ["setup"]
+        }
+{% if force_merge | default(true) %}
+        ,{
+          "operation": "force-merge-all",
+          "tags": ["setup"]
+        }
+{% endif %}
+        ,{
+          "name": "check-cluster-health",
+          "operation": {
+            "operation-type": "cluster-health",
+            "request-params": {
+              "wait_for_status": "{{cluster_health | default('green')}}",
+              "wait_for_no_relocating_shards": "true"
+            },
+            "retry-until-success": true
+          },
+          "tags": ["setup"]
+        }
+{% if verify_results | default(true) %}
+        ,{
+          "operation": "verify",
+          "tags": ["setup"]
+        }
+{% endif %}
+{# Variants of one query run next to each other, so that drift of the cluster affects them equally #}
+{% for card in cards %}
+{% for shape in shapes %}
+{% for variant in variants %}
+{% if variant.id != "lookup-aligned" or p_control %}
+        ,{
+          "operation": "esql_{{variant.id}}_{{card.label}}_{{shape.id}}",
+          "tags": ["colocated", "join", "{{variant.id}}", "{{shape.id}}", "{{card.label}}"],
+          "clients": {{query_clients | default(1)}},
+          "warmup-iterations": {{warmup_iterations | default(10)}},
+          "iterations": {{iterations | default(50)}}
+        }
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endfor %}
+      ]
+    }

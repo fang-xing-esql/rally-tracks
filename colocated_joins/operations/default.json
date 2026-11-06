@@ -1,0 +1,94 @@
+{# bulk indexing, setup and verification #}
+    {
+      "name": "setup-indices",
+      "operation-type": "colocated-setup-indices",
+      "number_of_shards": {{number_of_shards | default(3)}},
+      "number_of_replicas": {{number_of_replicas | default(0)}},
+      "layout": {{layout | default("aligned") | tojson}},
+      "auto_expand_replicas": {{auto_expand_replicas | default("0-all") | tojson}},
+      "left_sort_field": {{left_sort_field | default("id") | tojson}},
+      "index_settings": {{index_settings | default({}) | tojson}},
+      "cards": {{cards | tojson}}
+    },
+    {
+      "name": "force-merge-all",
+      "operation-type": "force-merge",
+      "index": "colo_lhs_unrouted{% for key in p_card_keys %},colo_lhs_aligned_{{key}}{% endfor %}{% for card in cards %},{{card.rhs}},{{card.rhs_key_only}},{{card.lookup}},{{card.lookup_key_only}}{% endfor %}",
+      "max-num-segments": 1,
+      "mode": "polling",
+      "poll-period": 5
+    },
+    {
+      "name": "verify",
+      "operation-type": "colocated-verify",
+      "layout": {{layout | default("aligned") | tojson}},
+      "cards": {{cards | tojson}}
+    },
+    {
+      "name": "index-lhs-unrouted",
+      "operation-type": "bulk",
+      "indices": ["colo_lhs_unrouted"],
+      "bulk-size": {{bulk_size | default(10000)}},
+      "ingest-percentage": {{ingest_percentage | default(100)}}
+    }
+{% for key in p_card_keys %}
+    ,{
+      "name": "reindex-lhs-aligned-{{key}}",
+      "operation-type": "colocated-reindex",
+      "batch_size": {{reindex_batch_size | default(1000)}},
+      "source": "colo_lhs_unrouted",
+      "dest": "colo_lhs_aligned_{{key}}"
+    }
+{% endfor %}
+{# The right side is always loaded completely, so that every left key finds its match. The lookup index and the key-only indices are copied from the colocated one. #}
+{% for card in cards %}
+    ,{
+      "name": "index-rhs-{{card.label}}",
+      "operation-type": "bulk",
+      "indices": ["{{card.rhs}}"],
+      "bulk-size": {{bulk_size | default(10000)}},
+      "ingest-percentage": 100
+    },
+    {
+      "name": "reindex-lookup-{{card.label}}",
+      "operation-type": "colocated-reindex",
+      "batch_size": {{reindex_batch_size | default(1000)}},
+      "source": "{{card.rhs}}",
+      "dest": "{{card.lookup}}"
+    },
+    {
+      "name": "reindex-rhs-key-only-{{card.label}}",
+      "operation-type": "colocated-reindex",
+      "batch_size": {{reindex_batch_size | default(1000)}},
+      "source": "{{card.rhs}}",
+      "source_fields": ["key_{{card.key}}"],
+      "dest": "{{card.rhs_key_only}}"
+    },
+    {
+      "name": "reindex-lookup-key-only-{{card.label}}",
+      "operation-type": "colocated-reindex",
+      "batch_size": {{reindex_batch_size | default(1000)}},
+      "source": "{{card.rhs}}",
+      "source_fields": ["key_{{card.key}}"],
+      "dest": "{{card.lookup_key_only}}"
+    }
+{% endfor %}
+
+{# queries: one operation per join, join variant and query shape #}
+{% for card in cards %}
+{% for shape in shapes %}
+{% for variant in variants %}
+{% set left = card.aligned if variant.left == "aligned" else "colo_lhs_unrouted" %}
+{% set rhs_index = card.rhs_key_only if shape.key_only else card.rhs %}
+{% set lookup_index = card.lookup_key_only if shape.key_only else card.lookup %}
+{% set join = ("LOOKUP JOIN " ~ lookup_index) if variant.kind == "lookup" else ("JOIN " ~ rhs_index) %}
+{% set query = "FROM " ~ left ~ ((" | " ~ (shape.pre | replace("{key}", card.key))) if shape.pre else "") ~ " | " ~ join ~ " ON key_" ~ card.key ~ " | " ~ shape.tail %}
+    ,{
+      "name": "esql_{{variant.id}}_{{card.label}}_{{shape.id}}",
+      "operation-type": "esql",
+      "query": {{query | tojson}},
+      "body": { "accept_pragma_risks": true, "pragma": { "max_concurrent_shards_per_node": {{max_concurrent_shards_per_node | default(10)}}{% if shape.page_size %}, "page_size": {{shape.page_size}}{% endif %} } }
+    }
+{% endfor %}
+{% endfor %}
+{% endfor %}

@@ -1,0 +1,119 @@
+{% import "rally.helpers" as rally with context %}
+{#
+  Shared definitions. operations/*.json and challenges/*.json are inlined into this template by rally.collect,
+  so they can use everything defined here.
+#}
+{% set p_card_keys = key_cardinalities | default(["100000", "1000000"]) %}
+{% set p_fanout = include_fanout | default(false) %}
+{% set p_control = include_lookup_aligned_control | default(true) %}
+{# Left page size (rows) of the aggregate shapes, set with the page_size pragma so that all variants read the same number of left pages; 0 leaves it to the planner #}
+{% set p_stats_page_size = stats_page_size | default(4096) %}
+
+{# One entry per join: the join key, the right-hand indices (with all columns, and key-only) and how many right documents match one left key #}
+{% set cards = [] %}
+{% for key in p_card_keys %}
+  {% set _ = cards.append({"key": key, "label": key, "rhs": "colo_rhs_" ~ key, "lookup": "lookup_idx_" ~ key ~ "_f10", "aligned": "colo_lhs_aligned_" ~ key, "fanout": 1, "rhs_key_only": "colo_rhs_" ~ key ~ "_key_only", "lookup_key_only": "lookup_idx_" ~ key ~ "_key_only"}) %}
+{% endfor %}
+{% if p_fanout and "100000" in p_card_keys %}
+  {% set _ = cards.append({"key": "100000", "label": "100000_x10", "rhs": "colo_rhs_100000_x10", "lookup": "lookup_idx_100000_f10_x10", "aligned": "colo_lhs_aligned_100000", "fanout": 10, "rhs_key_only": "colo_rhs_100000_x10_key_only", "lookup_key_only": "lookup_idx_100000_x10_key_only"}) %}
+{% endif %}
+
+{# A: lookup join on an unrouted left index. B: colocated join, only the right side routed. C: both sides routed. A2: control, lookup join on the routed left index. #}
+{% set variants = [
+  {"id": "lookup-unrouted", "left": "unrouted", "kind": "lookup"},
+  {"id": "rhs-sharded-on-join-key", "left": "unrouted", "kind": "join"},
+  {"id": "both-colocated", "left": "aligned", "kind": "join"},
+  {"id": "lookup-aligned", "left": "aligned", "kind": "lookup"}
+] %}
+
+{#
+  No filters. "pre" is a command that runs on the left side before the join ({key} is the join key). The limit shapes can stop once the limit is reached, so they measure the latency of the first rows.
+  A bigger LIMIT would not make a limit shape join every left row: results are truncated at 10000 rows. The three stats shapes have no LIMIT, so
+  they join every left row. stats-count only needs the left key, and the colocated join still loads the right columns for it, which
+  the lookup join does not; stats-count-right-columns needs the same right columns in every variant; stats-count-key-only joins against
+  right indices that have only the join key, so there are no right columns to load at all.
+#}
+{% set shapes = [
+  {"id": "limit1", "pre": "", "tail": "LIMIT 1"},
+  {"id": "limit10000", "pre": "", "tail": "LIMIT 10000"},
+  {"id": "keep-before-join-limit10000", "pre": "KEEP @timestamp, key_{key}", "tail": "LIMIT 10000"},
+  {"id": "keep-after-join-limit10000", "pre": "", "tail": "KEEP @timestamp, lookup_keyword_0 | LIMIT 10000"},
+  {"id": "stats-count", "pre": "", "tail": "STATS c = COUNT(*)", "page_size": p_stats_page_size},
+  {"id": "stats-count-key-only", "pre": "", "tail": "STATS c = COUNT(*)", "page_size": p_stats_page_size, "key_only": true},
+  {"id": "stats-count-right-columns", "pre": "", "tail": "STATS c = COUNT(*), c0 = COUNT(lookup_keyword_0), c1 = COUNT(lookup_keyword_1), c2 = COUNT(lookup_keyword_2), c3 = COUNT(lookup_keyword_3), c4 = COUNT(lookup_keyword_4), c5 = COUNT(lookup_keyword_5), c6 = COUNT(lookup_keyword_6), c7 = COUNT(lookup_keyword_7), c8 = COUNT(lookup_keyword_8), c9 = COUNT(lookup_keyword_9)", "page_size": p_stats_page_size}
+] %}
+
+{
+  "version": 2,
+  "description": "Compares ES|QL colocated JOIN (right side routed by the join key, left side routed or not) with LOOKUP JOIN on a multi-node cluster. Needs a build with the colocated join command.",
+  "corpora": [
+    {
+      "name": "colo-left",
+      "base-url": "https://rally-tracks.elastic.co/joins",
+      "documents": [
+        {
+          "target-index": "colo_lhs_unrouted",
+          "source-file": "documents.json.bz2",
+          "#COMMENT": "Same corpus as join_base_idx in the joins track. The aligned left indices are copied from this index with _reindex, because Rally downloads document sets in parallel and two sets must not share a source file",
+          "document-count": 10000000,
+          "compressed-bytes": 1004521674,
+          "uncompressed-bytes": 43773344760
+        }
+      ]
+    }
+{% if "100000" in p_card_keys %}
+    ,{
+      "name": "colo-right-100000",
+      "base-url": "https://rally-tracks.elastic.co/joins",
+      "documents": [
+        {
+          "target-index": "colo_rhs_100000",
+          "source-file": "lookup_idx_100000_f10.json.bz2",
+          "#COMMENT": "100k documents, 100k distinct keys, routed by key_100000",
+          "document-count": 100000,
+          "compressed-bytes": 2248693,
+          "uncompressed-bytes": 41277790
+        }
+      ]
+    }
+{% endif %}
+{% if "1000000" in p_card_keys %}
+    ,{
+      "name": "colo-right-1000000",
+      "base-url": "https://rally-tracks.elastic.co/joins",
+      "documents": [
+        {
+          "target-index": "colo_rhs_1000000",
+          "source-file": "lookup_idx_1000000_f10.json.bz2",
+          "#COMMENT": "1M documents, 1M distinct keys, routed by key_1000000",
+          "document-count": 1000000,
+          "compressed-bytes": 24054261,
+          "uncompressed-bytes": 424777790
+        }
+      ]
+    }
+{% endif %}
+{% if p_fanout %}
+    ,{
+      "name": "colo-right-100000-x10",
+      "base-url": "https://rally-tracks.elastic.co/joins",
+      "documents": [
+        {
+          "target-index": "colo_rhs_100000_x10",
+          "source-file": "lookup_idx_100000_f10_x10.json.bz2",
+          "#COMMENT": "1M documents, 100k distinct keys (10 documents per key), routed by key_100000",
+          "document-count": 1000000,
+          "compressed-bytes": 22483295,
+          "uncompressed-bytes": 412777900
+        }
+      ]
+    }
+{% endif %}
+  ],
+  "operations": [
+    {{ rally.collect(parts="operations/*.json") }}
+  ],
+  "challenges": [
+    {{ rally.collect(parts="challenges/*.json") }}
+  ]
+}
